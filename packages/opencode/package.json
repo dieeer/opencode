@@ -16,7 +16,7 @@
     "dev:temporary": "bun run --conditions=browser ./src/temporary.ts"
   },
   "bin": {
-    "justincode": "./bin/justincode.cjs"
+    "justincode": "./bin/justincode"
   },
   "exports": {
     "./*": "./src/*.ts"
