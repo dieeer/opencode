@@ -3,9 +3,10 @@
 const childProcess = require("child_process")
 const path = require("path")
 
-const entry = path.join(__dirname, "..", "src", "index.ts")
+const projectRoot = path.join(__dirname, "..", "..")
+const entry = path.join(projectRoot, "packages", "opencode", "src", "index.ts")
 
-const child = childProcess.spawn("bun", ["run", "--conditions=browser", entry, ...process.argv.slice(2)], {
+const child = childProcess.spawn("bun", ["run", "--cwd", projectRoot, "--conditions=browser", "packages/opencode/src/index.ts", ...process.argv.slice(2)], {
   stdio: "inherit",
 })
 
