@@ -3,8 +3,7 @@
 const childProcess = require("child_process")
 const path = require("path")
 
-const scriptDir = path.dirname(require.resolve("./package.json"))
-const entry = path.join(scriptDir, "src", "index.ts")
+const entry = path.join(__dirname, "..", "src", "index.ts")
 
 const child = childProcess.spawn("bun", ["run", "--conditions=browser", entry, ...process.argv.slice(2)], {
   stdio: "inherit",
