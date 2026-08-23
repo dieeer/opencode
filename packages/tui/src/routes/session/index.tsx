@@ -17,7 +17,8 @@ import {
 import { Dynamic } from "solid-js/web"
 import path from "node:path"
 import { mkdir, writeFile } from "node:fs/promises"
-import { useRoute, useRouteData } from "../../context/route"
+import { useRoute, useRouteData, type SessionRoute } from "../../context/route"
+import { useSplitPane } from "../../context/split-pane"
 import { useProject } from "../../context/project"
 import { useSync } from "../../context/sync"
 import { useEvent } from "../../context/event"
@@ -183,7 +184,8 @@ export function Session() {
     await writeFile(file, content)
   }
   const pluginRuntime = usePluginRuntime()
-  const route = useRouteData("session")
+  const splitPane = useSplitPane()
+  const route = useRoute()
   const { navigate } = useRoute()
   const sync = useSync()
   const event = useEvent()
@@ -193,7 +195,10 @@ export function Session() {
   const kv = useKV()
   const { theme } = useTheme()
   const promptRef = usePromptRef()
-  const session = createMemo(() => sync.session.get(route.sessionID))
+
+  const currentSessionID = splitPane?.sessionID ?? (route.data.type === "session" ? route.data.sessionID : "")
+
+  const session = createMemo(() => sync.session.get(currentSessionID))
   const location = createMemo(() => {
     const current = session()
     return current ? { directory: current.directory, workspaceID: current.workspaceID } : undefined
@@ -210,7 +215,7 @@ export function Session() {
       .filter((x) => x.parentID === parentID || x.id === parentID)
       .toSorted((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
   })
-  const messages = createMemo(() => sync.data.message[route.sessionID] ?? [])
+  const messages = createMemo(() => sync.data.message[currentSessionID] ?? [])
   const messagesBeforeRevert = () => {
     const messageID = session()?.revert?.messageID
     if (!messageID) return messages()
@@ -285,13 +290,13 @@ export function Session() {
   const editor = useEditorContext()
 
   createEffect(() => {
-    const sessionID = route.sessionID
+    const capturedSessionID = currentSessionID
     void (async () => {
       const previousWorkspace = untrack(() => project.workspace.current())
-      const result = await sdk.client.session.get({ sessionID }, { throwOnError: true })
+      const result = await sdk.client.session.get({ sessionID: capturedSessionID }, { throwOnError: true })
       if (!result.data) {
         toast.show({
-          message: `Session not found: ${sessionID}`,
+          message: `Session not found: ${capturedSessionID}`,
           variant: "error",
           duration: 5000,
         })
@@ -311,10 +316,10 @@ export function Session() {
         } catch {}
       }
       editor.reconnect(result.data.directory)
-      await sync.session.sync(sessionID)
-      if (route.sessionID === sessionID && scroll) scroll.scrollBy(100_000)
+      await sync.session.sync(capturedSessionID)
+      if (currentSessionID === capturedSessionID && scroll) scroll.scrollBy(100_000)
     })().catch((error) => {
-      if (route.sessionID !== sessionID) return
+      if (currentSessionID !== capturedSessionID) return
       toast.show({
         message: errorMessage(error),
         variant: "error",
@@ -328,7 +333,7 @@ export function Session() {
   event.on("message.part.updated", (evt) => {
     const part = evt.properties.part
     if (part.type !== "tool") return
-    if (part.sessionID !== route.sessionID) return
+    if (part.sessionID !== currentSessionID) return
     if (part.state.status !== "completed") return
     if (part.id === lastSwitch) return
 
@@ -347,16 +352,16 @@ export function Session() {
   const bind = (r: PromptRef | undefined) => {
     prompt = r
     promptRef.set(r)
-    if (seeded || !route.prompt || !r) return
+    if (seeded || !("prompt" in route.data) || !route.data.prompt || !r) return
     seeded = true
-    r.set(route.prompt)
+    r.set(route.data.prompt)
   }
   const keymap = useOpencodeKeymap()
   const dialog = useDialog()
   const renderer = useRenderer()
 
   event.on("session.status", (evt) => {
-    if (evt.properties.sessionID !== route.sessionID) return
+    if (evt.properties.sessionID !== currentSessionID) return
     if (evt.properties.status.type !== "retry") return
     if (!evt.properties.status.action) return
     if (dialog.stack.length > 0) return
@@ -467,7 +472,7 @@ export function Session() {
     {
       title: session()?.share?.url ? "Copy share link" : "Share session",
       value: "session.share",
-      suggested: route.type === "session",
+      suggested: route.data.type === "session",
       category: "Session",
       enabled: sync.data.config.share !== "disabled",
       slash: {
@@ -492,7 +497,7 @@ export function Session() {
         }
         await sdk.client.session
           .share({
-            sessionID: route.sessionID,
+            sessionID: currentSessionID,
           })
           .then((res) => copy(res.data!.share!.url))
           .catch((error) => {
@@ -512,7 +517,7 @@ export function Session() {
         name: "rename",
       },
       run: () => {
-        dialog.replace(() => <DialogSessionRename session={route.sessionID} />)
+        dialog.replace(() => <DialogSessionRename session={currentSessionID} />)
       },
     },
     {
@@ -531,7 +536,7 @@ export function Session() {
               })
               if (child) scroll.scrollBy(child.y - scroll.y - 1)
             }}
-            sessionID={route.sessionID}
+            sessionID={currentSessionID}
             setPrompt={(promptInfo) => prompt?.set(promptInfo)}
           />
         ))
@@ -554,7 +559,7 @@ export function Session() {
               })
               if (child) scroll.scrollBy(child.y - scroll.y - 1)
             }}
-            sessionID={route.sessionID}
+            sessionID={currentSessionID}
           />
         ))
       },
@@ -578,7 +583,7 @@ export function Session() {
           return
         }
         void sdk.client.session.summarize({
-          sessionID: route.sessionID,
+          sessionID: currentSessionID,
           modelID: selectedModel.modelID,
           providerID: selectedModel.providerID,
         })
@@ -596,7 +601,7 @@ export function Session() {
       run: async () => {
         await sdk.client.session
           .unshare({
-            sessionID: route.sessionID,
+            sessionID: currentSessionID,
           })
           .then(() => toast.show({ message: "Session unshared successfully", variant: "success" }))
           .catch((error) => {
@@ -616,13 +621,13 @@ export function Session() {
         name: "undo",
       },
       run: async () => {
-        const status = sync.data.session_status?.[route.sessionID]
-        if (status?.type !== "idle") await sdk.client.session.abort({ sessionID: route.sessionID }).catch(() => {})
+        const status = sync.data.session_status?.[currentSessionID]
+        if (status?.type !== "idle") await sdk.client.session.abort({ sessionID: currentSessionID }).catch(() => {})
         const message = messagesBeforeRevert().findLast((item) => item.role === "user")
         if (!message) return
         void sdk.client.session
           .revert({
-            sessionID: route.sessionID,
+            sessionID: currentSessionID,
             messageID: message.id,
           })
           .then(() => {
@@ -659,13 +664,13 @@ export function Session() {
         const message = messages().find((x) => x.role === "user" && x.id > messageID)
         if (!message) {
           void sdk.client.session.unrevert({
-            sessionID: route.sessionID,
+            sessionID: currentSessionID,
           })
           prompt?.set({ input: "", parts: [] })
           return
         }
         void sdk.client.session.revert({
-          sessionID: route.sessionID,
+          sessionID: currentSessionID,
           messageID: message.id,
         })
       },
@@ -835,7 +840,7 @@ export function Session() {
       category: "Session",
       hidden: true,
       run: () => {
-        const messages = sync.data.message[route.sessionID]
+        const messages = sync.data.message[currentSessionID]
         if (!messages || !messages.length) return
 
         // Find the most recent user message with non-ignored, non-synthetic text parts
@@ -1027,7 +1032,7 @@ export function Session() {
       enabled: foregroundTasks().length > 0,
       run: () => {
         void sdk.client.experimental.session.background({
-          sessionID: route.sessionID,
+          sessionID: currentSessionID,
           workspace: project.workspace.current(),
         })
         dialog.clear()
@@ -1153,7 +1158,7 @@ export function Session() {
   })
 
   // snap to bottom when session changes
-  createEffect(on(() => route.sessionID, toBottom))
+  createEffect(on(() => currentSessionID, toBottom))
 
   return (
     <LocationProvider location={location()}>
@@ -1162,7 +1167,7 @@ export function Session() {
           get width() {
             return contentWidth()
           },
-          sessionID: route.sessionID,
+          sessionID: currentSessionID,
           conceal,
           thinkingMode,
           showThinking,
@@ -1176,6 +1181,25 @@ export function Session() {
         }}
       >
         <box flexDirection="row" flexGrow={1} minHeight={0}>
+          <Show when={splitPane?.callsign}>
+            <box
+              flexDirection="row"
+              flexShrink={0}
+              paddingLeft={2}
+              paddingRight={2}
+              paddingTop={0}
+              paddingBottom={0}
+              gap={1}
+            >
+              <text fg={splitPane?.pane === "left" ? theme.primary : theme.accent}>
+                {"▸ "}
+              </text>
+              <text fg={theme.textMuted}>
+                <span style={{ bold: true }}>{splitPane?.callsign}</span>
+                {" online"}
+              </text>
+            </box>
+          </Show>
           <box flexGrow={1} minHeight={0} paddingBottom={1} paddingLeft={2} paddingRight={2} gap={1}>
             <Show when={session()}>
               <scrollbox
@@ -1273,7 +1297,7 @@ export function Session() {
                             dialog.replace(() => (
                               <DialogMessage
                                 messageID={message.id}
-                                sessionID={route.sessionID}
+                                sessionID={currentSessionID}
                                 setPrompt={(promptInfo) => prompt?.set(promptInfo)}
                               />
                             ))
@@ -1314,7 +1338,7 @@ export function Session() {
                   <pluginRuntime.Slot
                     name="session_prompt"
                     mode="replace"
-                    session_id={route.sessionID}
+                    session_id={currentSessionID}
                     visible={visible()}
                     disabled={disabled()}
                     on_submit={toBottom}
@@ -1327,8 +1351,8 @@ export function Session() {
                       onSubmit={() => {
                         toBottom()
                       }}
-                      sessionID={route.sessionID}
-                      right={<pluginRuntime.Slot name="session_prompt_right" session_id={route.sessionID} />}
+                      sessionID={currentSessionID}
+                      right={<pluginRuntime.Slot name="session_prompt_right" session_id={currentSessionID} />}
                     />
                   </pluginRuntime.Slot>
                 </Show>
@@ -1339,7 +1363,7 @@ export function Session() {
           <Show when={sidebarVisible()}>
             <Switch>
               <Match when={wide()}>
-                <Sidebar sessionID={route.sessionID} />
+                <Sidebar sessionID={currentSessionID} />
               </Match>
               <Match when={!wide()}>
                 <box
@@ -1351,7 +1375,7 @@ export function Session() {
                   alignItems="flex-end"
                   backgroundColor={RGBA.fromInts(0, 0, 0, 70)}
                 >
-                  <Sidebar sessionID={route.sessionID} />
+                  <Sidebar sessionID={currentSessionID} />
                 </box>
               </Match>
             </Switch>

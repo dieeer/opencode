@@ -53,6 +53,8 @@ import { DialogConsoleOrg } from "./component/dialog-console-org"
 import { ThemeProvider, useTheme } from "./context/theme"
 import { Home } from "./routes/home"
 import { Session } from "./routes/session"
+import { SplitBorder } from "./ui/split-border"
+import { splitPaneContext } from "./context/split-pane"
 import { PromptHistoryProvider } from "./component/prompt/history"
 import { FrecencyProvider } from "./component/prompt/frecency"
 import { PromptStashProvider } from "./component/prompt/stash"
@@ -105,6 +107,7 @@ const appGlobalBindingCommands = [
 
 const appBindingCommands = [
   "command.palette.show",
+  "session.split",
   "model.list",
   "model.cycle_recent",
   "model.cycle_recent_reverse",
@@ -589,6 +592,31 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
           route.navigate({
             type: "home",
           })
+          dialog.clear()
+        },
+      },
+      {
+        name: "session.split",
+        title: "Split view",
+        suggested: route.data.type === "session",
+        category: "Session",
+        hidden: true,
+        run: async () => {
+          const currentID =
+            route.data.type === "session"
+              ? route.data.sessionID
+              : route.data.type === "split"
+                ? route.data.focus === "left"
+                  ? route.data.left
+                  : route.data.right
+                : undefined
+          if (!currentID) return
+          const result = await sdk.client.session.create({})
+          if (!result.data?.id) {
+            toast.show({ message: "Failed to create session", variant: "error" })
+            return
+          }
+          route.split.open(result.data.id)
           dialog.clear()
         },
       },
@@ -1117,6 +1145,33 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
               <Show when={route.data.type === "session" ? route.data.sessionID : undefined} keyed>
                 {(_) => <Session />}
               </Show>
+            </Match>
+            <Match when={route.data.type === "split" ? route.data : undefined}>
+              {(split) => (
+                <box flexDirection="row" flexGrow={1} minHeight={0}>
+                  <splitPaneContext.Provider value={{ sessionID: split().left, pane: "left", callsign: split().leftCallsign }}>
+                    <box
+                      flexGrow={1}
+                      minHeight={0}
+                      flexDirection="column"
+                      opacity={split().focus === "left" ? 1 : 0.7}
+                    >
+                      <Session />
+                    </box>
+                  </splitPaneContext.Provider>
+                  <SplitBorder />
+                  <splitPaneContext.Provider value={{ sessionID: split().right, pane: "right", callsign: split().rightCallsign }}>
+                    <box
+                      flexGrow={1}
+                      minHeight={0}
+                      flexDirection="column"
+                      opacity={split().focus === "right" ? 1 : 0.7}
+                    >
+                      <Session />
+                    </box>
+                  </splitPaneContext.Provider>
+                </box>
+              )}
             </Match>
           </Switch>
           {plugin()}
